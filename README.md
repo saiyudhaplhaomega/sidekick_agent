@@ -14,6 +14,11 @@ It combines LLM-based reasoning, evaluation, and browser tools to automate infor
 * 🔄 **Async graph execution** for efficient task handling
 
 ---
+## 🖼️ Project Preview
+
+💡 Example screenshot of the Gradio-based Sidekick interface.
+![Sidekick Preview](snapshot.png)
+---
 
 ## 🗂️ Project Structure
 
