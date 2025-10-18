@@ -3,7 +3,7 @@ from langchain_community.agent_toolkits import PlayWrightBrowserToolkit
 from dotenv import load_dotenv
 import os
 import requests
-from langchain.agents import Tool
+from langchain_core.tools import tool
 from langchain_community.agent_toolkits import FileManagementToolkit
 from langchain_community.tools.wikipedia.tool import WikipediaQueryRun
 from langchain_experimental.tools import PythonREPLTool
@@ -12,28 +12,22 @@ from langchain_community.utilities.wikipedia import WikipediaAPIWrapper
 from twilio.rest import Client as TwilioClient
 from amadeus import Client as AmadeusClient
 from langchain_tavily import TavilySearch
+
 load_dotenv(override=True)
 
-
 # Configure Amadeus Client for flight and hotel search
-# We'll only initialize it if keys are provided, inside the tool later
 amadeus_api_key = os.environ["AMADEUS_CLIENT_ID"]
 amadeus_api_secret = os.environ["AMADEUS_CLIENT_SECRET"]
 amadeus_client = AmadeusClient(
-    client_id = amadeus_api_key,
-    client_secret = amadeus_api_secret,
-    hostname = "test",  # Start with the test environment
+    client_id=amadeus_api_key,
+    client_secret=amadeus_api_secret,
+    hostname="test",  # Start with the test environment
 )
 tavily_api_key = os.environ["TAVILY_API_KEY"]
-#tavily_search_tool = TavilySearchResults(max_results = 3)
 tavily_search_tool = TavilySearch(k=3)
 # List of tools for this step
 tools_list_single = [tavily_search_tool]
 
-
-#pushover_token = os.getenv("PUSHOVER_TOKEN")
-#pushover_user = os.getenv("PUSHOVER_USER")
-#pushover_url = "https://api.pushover.net/1/messages.json"
 account_sid = os.getenv("TWILIO_ACCOUNT_SID")
 auth_token = os.getenv("TWILIO_AUTH_TOKEN")
 twilio_whatsapp_number = os.getenv("TWILIO_WHATSAPP_NUMBER")
@@ -43,7 +37,6 @@ serper = GoogleSerperAPIWrapper()
 
 async def playwright_tools():
     playwright = await async_playwright().start()
-    #browser = await playwright.chromium.launch(headless=False)
     try:
         browser = await playwright.chromium.launch(headless=False)
     except Exception as e:
@@ -52,9 +45,9 @@ async def playwright_tools():
         subprocess.run([sys.executable, "-m", "playwright", "install", "chromium"])
         browser = await playwright.chromium.launch(headless=False)
 
-
     toolkit = PlayWrightBrowserToolkit.from_browser(async_browser=browser)
     return toolkit.get_tools(), browser, playwright
+
 ##############
 # go to this link to set up Twilio WhatsApp sandbox: https://www.twilio.com/docs/whatsapp/sandbox , https://www.twilio.com/console/sms/whatsapp/learn
 #############
@@ -65,19 +58,10 @@ def send_whatsapp(text: str):
         to=my_whatsapp_number,
         body=text  # simple text message (no need for content_sid)
     )
-#def push(text: str):
-#    """Send a push notification to the user"""
-#    requests.post(pushover_url, data = {"token": pushover_token, "user": pushover_user, "message": text})
-#    return "success"
-
 
 def get_file_tools():
     toolkit = FileManagementToolkit(root_dir="sandbox")
     return toolkit.get_tools()
-
-
-
-
 
 #################Travel Agent Tools ####################
 
@@ -86,7 +70,6 @@ def search_hotels_tool(city_code: str, check_in_date: str, check_out_date: str, 
     Searches for available hotel options in a specific city for given dates using Amadeus.
     Requires the IATA city code (e.g., 'PAR', 'BER') and dates in 'YYYY-MM-DD' format. Use get_current_date_tool first if dates are relative.
     """
-
     print(
         f"DEBUG: Calling Amadeus Hotel Search - City: {city_code}, Check-in: {check_in_date}, Check-out: {check_out_date}, Adults: {adults}"
     )
@@ -106,7 +89,7 @@ def search_hotels_tool(city_code: str, check_in_date: str, check_out_date: str, 
         hotelIds=",".join(hotel_ids),
         checkInDate=check_in_date,
         checkOutDate=check_out_date,
-        adults=adults, # we need to pass the number of adults
+        adults=adults,  # we need to pass the number of adults
         bestRateOnly=True,  # Try to get simpler results
     )
 
@@ -121,7 +104,6 @@ def search_hotels_tool(city_code: str, check_in_date: str, check_out_date: str, 
         return "Found hotel options:\n- " + "\n- ".join(results)
     else:
         return f"No available hotel offers found for the dates in {city_code} among the checked hotels."
-
 
 def search_flights_tool(
     origin_code: str,
@@ -145,7 +127,6 @@ def search_flights_tool(
         currency – 3‑letter code for pricing (default USD)
         max_offers – how many offers to list back
     """
-
     print(
         f"DEBUG: Calling Amadeus Flight Search – "
         f"{origin_code}->{destination_code}, "
@@ -192,53 +173,54 @@ def search_flights_tool(
 
 ######################all tools push###########################
 async def other_tools():
-    #push_tool = Tool(name="send_push_notification", func=push, description="Use this tool when you want to send a push notification")
-    push_tool = Tool(
-        name="send_push_notification_whatsapp",
-        func=send_whatsapp,
-        description="useful for when you want to send a push notification"
-    )
+    @tool
+    def send_push_notification_whatsapp(text: str) -> str:
+        """Useful for when you want to send a push notification via WhatsApp."""
+        return send_whatsapp(text)
+
+    @tool
+    def search(query: str) -> str:
+        """Use this tool when you want to get the results of an online web search."""
+        return serper.run(query)
+
+    @tool
+    def search_flights(
+        origin_code: str,
+        destination_code: str,
+        departure_date: str,
+        return_date: str | None = None,
+        adults: int = 1,
+        travel_class: str = "ECONOMY",
+        currency: str = "USD",
+        max_offers: int = 5
+    ) -> str:
+        """Search flights from origin to destination.
+        Arguments:
+        - origin_code: IATA code of departure airport (e.g., 'NYC')
+        - destination_code: IATA code of arrival airport (e.g., 'LON')
+        - departure_date: YYYY-MM-DD
+        - return_date: YYYY-MM-DD or omit for one-way
+        - adults: number of passengers
+        - travel_class: ECONOMY, BUSINESS, FIRST
+        - currency: USD, EUR, etc.
+        - max_offers: max results to return"""
+        return search_flights_tool(
+            origin_code, destination_code, departure_date, return_date, adults, travel_class, currency, max_offers
+        )
+
+    @tool
+    def search_hotels(city_code: str, check_in_date: str, check_out_date: str, adults: int = 1) -> str:
+        """Search hotels in a city for given dates.
+        Arguments:
+        - city_code: IATA city code (e.g., 'PAR')
+        - check_in_date: YYYY-MM-DD
+        - check_out_date: YYYY-MM-DD
+        - adults: number of adults (default 1)"""
+        return search_hotels_tool(city_code, check_in_date, check_out_date, adults)
+
     file_tools = get_file_tools()
-
-    tool_search =Tool(
-        name="search",
-        func=serper.run,
-        description="Use this tool when you want to get the results of an online web search"
-    )
-    #flight and hotel helping tools
-    tool_search_flights = Tool(
-    name="search_flights",
-    func=search_flights_tool,
-    description=(
-        "Search flights from origin to destination. "
-        "Arguments:\n"
-        "- origin_code: IATA code of departure airport (e.g., 'NYC')\n"
-        "- destination_code: IATA code of arrival airport (e.g., 'LON')\n"
-        "- departure_date: YYYY-MM-DD\n"
-        "- return_date: YYYY-MM-DD or omit for one-way\n"
-        "- adults: number of passengers\n"
-        "- travel_class: ECONOMY, BUSINESS, FIRST\n"
-        "- currency: USD, EUR, etc.\n"
-        "- max_offers: max results to return"
-        )
-    )
-
-    tool_search_hotels = Tool(
-        name="search_hotels",
-        func=search_hotels_tool,
-        description=(
-            "Search hotels in a city for given dates. "
-            "Arguments:\n"
-            "- city_code: IATA city code (e.g., 'PAR')\n"
-            "- check_in_date: YYYY-MM-DD\n"
-            "- check_out_date: YYYY-MM-DD\n"
-            "- adults: number of adults (default 1)"
-        )
-    )
-
     wikipedia = WikipediaAPIWrapper()
     wiki_tool = WikipediaQueryRun(api_wrapper=wikipedia)
-
     python_repl = PythonREPLTool()
-    
-    return file_tools + [push_tool, tool_search, python_repl,  wiki_tool,tool_search_flights,tool_search_hotels]
+
+    return file_tools + [send_push_notification_whatsapp, search, python_repl, wiki_tool, search_flights, search_hotels]
